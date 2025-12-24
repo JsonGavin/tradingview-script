@@ -1,0 +1,170 @@
+//@version=5
+indicator("Crypto Sniper: Titanium SOP [Final]", overlay=true, max_bars_back=4000)
+
+// ==========================================
+// 1. 外观配置
+// ==========================================
+group_ui = "🎨 界面设置"
+c_tbl_bg   = input.color(color.new(color.black, 40), "面板背景色", group=group_ui)
+c_tbl_txt  = input.color(color.white, "面板文字色", group=group_ui)
+show_labels = input.bool(true, "显示右侧标签", group=group_ui)
+show_ribbon = input.bool(true, "显示趋势彩带", group=group_ui)
+
+// ==========================================
+// 2. 趋势与波动系统
+// ==========================================
+ema21  = ta.ema(close, 21)
+sma200 = ta.sma(close, 200)
+sma365 = ta.sma(close, 365)
+
+// 波动带
+v_mid  = ta.vwma(hlc3, 90)
+dev    = ta.stdev(close, 90)
+band_mult = 2.0
+top_band = v_mid + dev * band_mult
+bot_band = v_mid - dev * band_mult
+
+// 绘图
+trend_up = ema21 >= sma200
+p_fast = plot(show_ribbon ? ema21 : na, "EMA 21", color=color.new(color.green, 50), linewidth=1)
+p_slow = plot(show_ribbon ? sma200 : na, "SMA 200", color=color.new(color.red, 50), linewidth=2)
+fill(p_fast, p_slow, color = trend_up ? color.new(color.green, 85) : color.new(color.red, 85))
+plot(sma365, "MA 365", color=color.new(color.white, 70), style=plot.style_circles)
+plot(top_band, "Top Band", color=color.new(color.red, 75))
+plot(bot_band, "Bot Band", color=color.new(color.green, 75))
+
+// ==========================================
+// 3. 量价与信号逻辑
+// ==========================================
+// VSA
+vol_avg = ta.sma(volume, 20)
+is_high_vol = volume > vol_avg * 1.5 
+is_wide_spread = math.abs(close - open) > ta.atr(14)
+vsa_bull = is_high_vol and close > open and is_wide_spread
+vsa_bear = is_high_vol and close < open and is_wide_spread
+vsa_churn = volume > vol_avg * 2.5 and not is_wide_spread
+
+// K线染色
+c_bar = color.new(color.gray, 50)
+if vsa_bull
+    c_bar := color.new(#00E676, 0)
+else if vsa_bear
+    c_bar := color.new(#FF1744, 0)
+else if vsa_churn
+    c_bar := color.new(color.yellow, 0)
+barcolor(vsa_bull or vsa_bear or vsa_churn ? c_bar : na)
+
+// 信号参数
+rsi = ta.rsi(close, 14)
+mfi = ta.mfi(close, 14)
+bull_div = (low[1] < low[5] and rsi[1] > rsi[5] and rsi[1] < 35) 
+bear_div = (high[1] > high[5] and rsi[1] < rsi[5] and rsi[1] > 65)
+
+// 狙击信号 (SOP 2 触发条件)
+signal_long = (low <= bot_band) and (bull_div or mfi < 20) and close > open
+signal_short = (high >= top_band) and (bear_div or mfi > 80) and close < open
+long_final = signal_long and not signal_long[1]
+short_final = signal_short and not signal_short[1]
+
+plotshape(long_final, "Sniper Long", shape.triangleup, location.belowbar, color.rgb(0, 255, 255), size=size.small)
+plotshape(short_final, "Sniper Short", shape.triangledown, location.abovebar, color.rgb(255, 0, 85), size=size.small)
+
+// ==========================================
+// 4. SOP 智能决策引擎 (SOP Logic Engine)
+// ==========================================
+// 定义三种状态的文字和颜色
+sop_txt = "Analyzing..."
+sop_col = color.gray
+
+// 优先级 1: SOP 2 - 左侧狙击 (信号出现时，立刻执行)
+if long_final
+    sop_txt := "⚡ 左侧抄底" // 场景二：左侧抄底
+    sop_col := color.rgb(0, 255, 255) // 亮青色
+else if short_final
+    sop_txt := "⚡ 左侧摸顶" // 场景二：左侧摸顶
+    sop_col := color.rgb(255, 0, 85) // 亮洋红
+// 优先级 2: SOP 1 - 顺势回调 (趋势强 + 回调中)
+else if ema21 > sma200 and close < ema21
+    sop_txt := "🌊 顺势接多" // 场景一：顺势接多
+    sop_col := color.green
+else if ema21 < sma200 and close > ema21
+    sop_txt := "🌊 顺势接空" // 场景一：顺势接空
+    sop_col := color.orange
+// 优先级 3: SOP 3 - 垃圾时间 (无趋势 or 盘整)
+else
+    sop_txt := "💤 垃圾时间" // 场景三：休息
+    sop_col := color.gray
+
+// ==========================================
+// 5. SOP 仪表盘 (Dashboard)
+// ==========================================
+if input.bool(true, "显示面板", group=group_ui)
+    // 增加了一行，现在是 7 行
+    var tbl = table.new(position.top_right, 2, 7, bgcolor=c_tbl_bg, border_color=color.gray, border_width=1)
+    
+    // Header
+    table.cell(tbl, 0, 0, "ASSET", text_color=c_tbl_txt, bgcolor=color.new(color.gray, 60))
+    table.cell(tbl, 1, 0, syminfo.ticker, text_color=c_tbl_txt, bgcolor=color.new(color.gray, 60))
+
+    // 1. Trend Status
+    trend_txt = ema21 > sma200 ? "牛" : "熊"
+    trend_col = ema21 > sma200 ? color.green : color.red
+    if (ema21 > sma200 and close < ema21) or (ema21 < sma200 and close > ema21)
+        trend_txt := "回调"
+        trend_col := color.yellow
+        
+    table.cell(tbl, 0, 1, "Trend Flow", text_color=c_tbl_txt)
+    table.cell(tbl, 1, 1, trend_txt, text_color=trend_col)
+    
+    // 2. Volume Status
+    vol_state = "成交量平平"
+    vol_col   = c_tbl_txt
+    if vsa_bull
+        vol_state := "放量涨"
+        vol_col   := color.green
+    else if vsa_bear
+        vol_state := "放量跌"
+        vol_col   := color.red
+    else if vsa_churn
+        vol_state := "巨量震荡"
+        vol_col   := color.yellow
+    
+    table.cell(tbl, 0, 2, "Volume", text_color=c_tbl_txt)
+    table.cell(tbl, 1, 2, vol_state, text_color=vol_col)
+
+    // 3. RSI
+    rsi_col = rsi > 70 ? color.red : rsi < 30 ? color.green : c_tbl_txt
+    table.cell(tbl, 0, 3, "RSI (14)", text_color=c_tbl_txt)
+    table.cell(tbl, 1, 3, str.tostring(math.round(rsi)), text_color=rsi_col)
+
+    // 4. MFI
+    mfi_col = mfi > 80 ? color.red : mfi < 20 ? color.green : c_tbl_txt
+    table.cell(tbl, 0, 4, "Money Flow", text_color=c_tbl_txt)
+    table.cell(tbl, 1, 4, str.tostring(math.round(mfi)), text_color=mfi_col)
+
+    // 5. Zone
+    price_zone = close > top_band ? "只卖不买" : close < bot_band ? "只买不卖" : "顺势而为"
+    zone_col = close > top_band ? color.red : close < bot_band ? color.green : color.rgb(224, 224, 224)
+    table.cell(tbl, 0, 5, "Zone", text_color=c_tbl_txt)
+    table.cell(tbl, 1, 5, price_zone, text_color=zone_col)
+
+    // 6. SOP STRATEGY (核心新增)
+    // 这一行字最大，因为最重要
+    table.cell(tbl, 0, 6, "SOP MODE", text_color=color.white, bgcolor=sop_col)
+    table.cell(tbl, 1, 6, sop_txt, text_color=color.white, bgcolor=sop_col)
+
+// ==========================================
+// 6. 标签绘制
+// ==========================================
+f_draw_label(_price, _txt, _color) =>
+    var label l = na
+    label.delete(l)
+    if show_labels and not na(_price)
+        txt_display = _txt + "\n" + str.tostring(_price, format.mintick)
+        l := label.new(bar_index + 3, _price, txt_display, color=color.new(_color, 80), style=label.style_label_left, textcolor=_color, size=size.small)
+
+if barstate.islast
+    f_draw_label(ema21, "EMA 21", color.green)
+    f_draw_label(sma200, "SMA 200", color.red)
+    f_draw_label(top_band, "Resist", color.red)
+    f_draw_label(bot_band, "Support", color.green)
